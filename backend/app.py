@@ -17,7 +17,7 @@ def db():
     return psycopg.connect(os.environ["DATABASE_URL"])
 
 def event(c, r, kind, **data):
-    e={"kind":kind, **data}
+    e={"kind":kind, "step":r["steps"], "iteration":r["iteration"], **data}
     r["trace"].append(e)
     c.execute("INSERT INTO lab_event(run_id,event) VALUES (%s,%s)",(r["id"],Jsonb(e)))
 
@@ -57,9 +57,10 @@ def load(c,id):
     return row[0],s
 
 def switch(c,r,role,content):
+    previous=r["role"]
     r["role"]=role
     r["messages"]=[{"role":"user","content":content}]
-    event(c,r,"ROUTING",role=role,detail=content)
+    event(c,r,"ROUTING",role="orchestrator",from_agent=previous,to_agent=role,reason={"resolver":"Il Planner ha restituito il piano: occorre eseguirlo.","verifier":"Il Resolver ha concluso: occorre una verifica indipendente.","planner":"Verifica fallita o mancante: occorre ripianificare."}[role],detail=content)
 
 def observation(c,r,tool,call_id,result):
     r["messages"].append({"role":"tool","tool_call_id":call_id,"content":json.dumps(result)})
@@ -85,6 +86,7 @@ def step(id:uuid.UUID):
                 save(c,r,s)
                 return {"run":r,"environment":s}
             r["tokens"]+=used
+            event(c,r,"LLM_RESPONSE",role=role,tokens=used,detail="Risposta del modello ricevuta")
             msg={"role":"assistant","content":m.get("content") or ""}
             calls=m.get("tool_calls") or []
             if calls: msg["tool_calls"]=[{"id":x["id"],"type":"function","function":x["function"]} for x in calls]
@@ -117,8 +119,10 @@ def step(id:uuid.UUID):
                     actual=verify(s)
                     if checked and all(actual.values()):
                         r["status"]="SUCCESS"
+                        event(c,r,"TERMINATION",role="orchestrator",detail="Obiettivo e continuità verificati",result=actual)
                     elif r["iteration"]>=3:
                         r["status"]="ESCALATED"
+                        event(c,r,"TERMINATION",role="orchestrator",detail="Limite iterazioni: escalation",result=actual)
                     else:
                         r["iteration"]+=1
                         switch(c,r,"planner","Verifica fallita o mancante. Ripianifica usando queste evidenze: "+json.dumps(r["evidence"]))
