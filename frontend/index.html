@@ -1,0 +1,75 @@
+<!doctype html><html lang="it"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AgenticLab | GH-600</title><style>
+*{box-sizing:border-box}body{font:17px system-ui;margin:0;background:#edf2f7;color:#17263b}main{max-width:1400px;margin:auto;padding:16px}header{background:#17263b;color:white;padding:16px 24px}h1,h2,h3,p{margin:0 0 10px}section,article{background:white;border:1px solid #cbd5e1;border-radius:10px;padding:16px;margin:10px 0}button,select{font:inherit;padding:10px;margin:3px;border:1px solid #aab8ca;border-radius:6px;background:white}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}button.primary{background:#1758a5;color:white}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.grid article{margin:0}.active{border:3px solid #1758a5;background:#eff6ff}.route{border-left:5px solid #6d28d9;background:#f5f3ff;padding:12px;margin:10px 0}.current{border:2px solid #1758a5}.event{border-bottom:1px solid #dce2ea;padding:10px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:5px 0}small{color:#53647a}.metrics{display:flex;gap:18px;flex-wrap:wrap}.metrics strong{font-size:23px}.good{color:#166534}.bad{color:#b91c1c}#trace{max-height:380px;overflow:auto}#currentEvents{max-height:350px;overflow:auto}#busy{font-weight:bold;color:#1758a5}#error{color:#b91c1c}details{margin:12px 0}summary{cursor:pointer}@media(max-width:800px){.grid{grid-template-columns:1fr}}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;border-bottom:1px solid #dce2ea}#summaryMetrics{margin:12px 0}.report{border-left:5px solid #475569}.report.success{border-left-color:#15803d}.report.escalated{border-left-color:#b45309}#configuration pre{font-size:14px}#configError{color:#b91c1c}</style>
+<header><h1>AgenticLab — IT Support</h1>GH-600 | Osserva ogni decisione del sistema multi-agentico</header><main>
+<section><h2>Missione</h2><p>Ripristinare l'accesso al CRM senza interrompere gli altri utenti.</p><select id="scenario"><option value="complex">Complex Incident</option><option value="happy">Happy Path</option><option value="governance">Governance Challenge</option></select><button id="start">Avvia / Reset</button><button id="step">Prossimo step</button><button class="primary" id="phase">Esegui fase</button><button id="auto">Automatico</button><button id="stop">Pausa esecuzione</button><p id="busy" role="status" aria-live="polite"></p><p id="error" role="alert"></p></section>
+<section><h2>Orchestrator — controllo deterministico</h2><div class="metrics" id="status">In attesa</div><div class="route" id="routing">Regola iniziale: Orchestrator → Planner</div><p id="next"></p><p id="pauseReason" role="status"></p></section>
+<section id="report" class="report" hidden><h2 id="reportTitle">Mission Summary</h2><div id="summaryMetrics" class="metrics"></div><p id="criteria"></p><p id="interventions"></p><p id="termination"></p><details open><summary>Before &amp; After — ambiente</summary><table><thead><tr><th>Risorsa</th><th>Iniziale</th><th>Attuale / finale</th></tr></thead><tbody id="comparison"></tbody></table></details><details><summary>Token per agente</summary><div id="agentTokens"></div></details><button id="export">Esporta missione e trace (JSON)</button></section><section class="current" aria-live="polite"><h2 id="stepTitle">Ultimo step — nessuna esecuzione</h2><p id="notes">Avvia la missione per iniziare.</p><div id="currentEvents"></div></section>
+<section id="approval" hidden><h2>Human approval — azione sospesa</h2>Sbloccare l'account?<button id="yes">Approva</button><button id="no">Rifiuta</button></section>
+<div class="grid" id="agents"></div>
+<section><h2>Ambiente simulato — PostgreSQL</h2><div class="metrics" id="env"></div><details><summary>Stato JSON</summary><pre id="raw"></pre></details></section>
+<section><h2>Configurazione degli agenti</h2><p>System prompt effettivi e strumenti autorizzati dal backend. Non contengono credenziali.</p><div id="configuration" class="grid"></div><p id="configError"></p></section><section><h2>Execution trace — cronologia completa</h2><div id="trace"></div></section></main>
+<script>
+let data=null,busy=false,automatic=false,loopActive=false,latest=[],delta=0,phaseStart=null,phaseRole=null;
+const $=id=>document.getElementById(id);
+const labels={planner:"Planner",resolver:"Resolver",verifier:"Verifier",orchestrator:"Orchestrator"};
+const roles={planner:"Diagnosi e piano",resolver:"Esecuzione degli interventi",verifier:"Verifica indipendente"};
+const toolNames={knowledge:"Consulta knowledge base",account:"Controlla account",session:"Controlla sessione",service:"Controlla CRM",unlock:"Sblocca account",refresh_session:"Rigenera sessione",restart:"Riavvia servizio",verify:"Verifica accesso e continuità"};
+const notes={MISSION:"Goal-oriented behavior: inizializzazione della missione senza chiamate AI.",ROUTING:"Orchestration: il codice deterministico seleziona il prossimo agente; non è una scelta del LLM.",TOOL_CALL:"Tool calling: il modello sceglie uno strumento tra quelli autorizzati.",TOOL_RESULT:"Observation: il backend esegue il tool e restituisce al modello il risultato.",AGENT_OUTPUT:"Output dell'agente: il modello restituisce testo operativo.",APPROVAL:"Human-in-the-loop: la scrittura è sospesa fino alla decisione umana.",HUMAN_DECISION:"Governance: decisione umana registrata.",LLM_RESPONSE:"Inferenza: risposta reale di Azure OpenAI.",TERMINATION:"Goal verification: l'orchestratore controlla l'esito effettivo.",ERROR:"Error handling: il processo è stato interrotto."};
+function node(tag,text,cls){const x=document.createElement(tag);x.textContent=text;if(cls)x.className=cls;return x;}
+function eventNode(e){const x=node("div","","event");x.append(node("strong",({TOOL_CALL:"1 · Tool selezionato dal modello",TOOL_RESULT:"2 · Risultato restituito dal backend",ROUTING:"Decisione di routing dell'orchestratore",AGENT_OUTPUT:"Output dell'agente",LLM_RESPONSE:"Risposta Azure OpenAI",MISSION:"Missione inizializzata",APPROVAL:"Autorizzazione richiesta",HUMAN_DECISION:"Decisione umana",TERMINATION:"Fine missione",ERROR:"Errore"}[e.kind]||e.kind)+" — "+(labels[e.role]||e.role||"")));if(e.from_agent)x.append(node("p",labels[e.from_agent]+" → "+labels[e.to_agent]+": "+e.reason));if(e.tool)x.append(node("p",(toolNames[e.tool]||e.tool)+" ["+e.tool+"]"));if(e.arguments!==undefined)x.append(node("small","Argomenti: "+e.arguments));if(e.tokens!==undefined)x.append(node("p","Token della chiamata: "+e.tokens));if(e.result)x.append(node("pre",JSON.stringify(e.result,null,2)));if(e.detail)x.append(node("pre",e.detail));return x;}
+function controls(){const r=data?.run;$("start").disabled=busy||loopActive;$("phase").disabled=busy||loopActive||r?.status!=="RUNNING";$("step").disabled=busy||automatic||r?.status!=="RUNNING";$("auto").disabled=busy||automatic||r?.status!=="RUNNING";$("stop").disabled=!automatic;$("yes").disabled=busy;$("no").disabled=busy;$("scenario").disabled=busy||loopActive;$("export").disabled=busy||loopActive||!r;}
+function render(){if(!data)return;const r=data.run,s=data.environment;
+$("status").textContent=r.status+" | Iterazione "+r.iteration+"/3 | Step "+r.steps+" | Token "+r.tokens;
+const route=r.trace.filter(e=>e.kind==="ROUTING").at(-1);
+$("routing").textContent=route?(route.from_agent?labels[route.from_agent]+" → "+labels[route.to_agent]+" | "+route.reason:"Routing → "+(labels[route.role]||route.role)):"Orchestrator → Planner | Regola iniziale: analizzare la missione.";
+$("next").textContent=r.status==="RUNNING"?"Prossima azione: chiamata LLM al "+labels[r.role]:r.status==="APPROVAL_REQUIRED"?"Prossima azione: decisione umana; nessuna chiamata LLM.":"Missione terminata: "+r.status;
+$("phase").textContent=r.status==="RUNNING"?"Esegui fase — "+labels[r.role]:"Esegui fase";
+$("stepTitle").textContent=(phaseStart!==null?"Fase "+labels[phaseRole]+" · fino allo step ":"Ultima operazione · Step ")+r.steps+" · "+(delta?"+"+delta+" token":"nessun nuovo token");
+$("notes").textContent="Trainer note: "+(notes[latest.at(-1)?.kind]||"Controllo dello stato");
+$("currentEvents").replaceChildren(...latest.slice().sort((a,b)=>Number(b.kind==="ROUTING"||b.kind==="TERMINATION")-Number(a.kind==="ROUTING"||a.kind==="TERMINATION")).map(eventNode));$("currentEvents").scrollTop=0;
+$("approval").hidden=r.status!=="APPROVAL_REQUIRED";
+$("agents").replaceChildren(...["planner","resolver","verifier"].map(role=>{const a=node("article","",r.role===role?"active":"");a.append(node("h3",labels[role]),node("p",roles[role]),node("strong",r.role===role?(r.status==="RUNNING"?"SELEZIONATO":r.status):r.trace.some(e=>e.role===role&&e.kind==="AGENT_OUTPUT")?"OUTPUT PRODOTTO":"IN ATTESA"));const out=r.trace.filter(e=>e.role===role&&e.kind==="AGENT_OUTPUT").at(-1);if(out){const d=node("details","");d.append(node("summary","Leggi ultimo output"),node("pre",out.detail));a.append(d);}return a;}));
+$("env").replaceChildren(...[["Account",s.account_locked?"Bloccato":"Sbloccato",!s.account_locked],["Sessione",s.session_valid?"Valida":"Non valida",s.session_valid],["CRM",s.crm_online?"Online":"Offline",s.crm_online],["Utenti registrati",s.active_users,true],["Interruzioni aggiuntive",s.interruptions,s.interruptions===0]].map(([k,v,ok])=>{const a=node("div","");a.append(node("small",k),node("br",""),node("strong",String(v),ok?"good":"bad"));return a;}));
+renderSummary(r);$("raw").textContent=JSON.stringify(s,null,2);$("trace").replaceChildren(...r.trace.slice().reverse().map(eventNode));controls();}
+async function request(path,body){if(busy)return;busy=true;controls();$("error").textContent="";$("busy").textContent=path.endsWith("/step")?"In esecuzione: "+labels[data.run.role]+" — attesa risposta Azure OpenAI...":"Operazione in corso...";try{const res=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});if(!res.ok)throw Error("HTTP "+res.status);const next=await res.json();const same=data?.run.id===next.run.id;latest=next.run.trace.slice(same?(phaseStart?.index??data.run.trace.length):0);delta=next.run.tokens-(same?(phaseStart?.tokens??data.run.tokens):0);data=next;render();}catch(e){automatic=false;$("error").textContent=e.message;}finally{busy=false;$("busy").textContent="";controls();}}
+$("start").onclick=()=>{automatic=false;phaseStart=null;$("pauseReason").textContent="";return request("/api/start",{scenario:$("scenario").value});};
+const step=()=>data&&request("/api/run/"+data.run.id+"/step");
+$("step").onclick=()=>{phaseStart=null;$("pauseReason").textContent="";return step();};
+async function runLoop(singlePhase){
+ if(loopActive||busy||data?.run.status!=="RUNNING")return;
+ const initialRole=data.run.role;
+ phaseRole=initialRole;phaseStart=singlePhase?{index:data.run.trace.length,tokens:data.run.tokens}:null;
+ $("pauseReason").textContent="";automatic=true;loopActive=true;controls();
+ try{
+ while(automatic&&data.run.status==="RUNNING"){
+ await step();
+ if(singlePhase&&data.run.role!==initialRole)break;
+ if(!automatic||data.run.status!=="RUNNING")break;
+ await new Promise(r=>setTimeout(r,800));
+ }
+ const r=data.run;
+ $("pauseReason").textContent=r.status==="APPROVAL_REQUIRED"?"Pausa: autorizzazione umana richiesta.":r.status!=="RUNNING"?"Fine esecuzione: "+r.status:singlePhase&&r.role!==initialRole?"Pausa didattica: "+labels[initialRole]+" → "+labels[r.role]+". Spiega il routing prima di continuare.":"Esecuzione in pausa.";
+ }finally{automatic=false;loopActive=false;controls();}
+}
+$("phase").onclick=()=>runLoop(true);
+$("auto").onclick=()=>runLoop(false);
+$("stop").onclick=()=>{automatic=false;$("pauseReason").textContent="Pausa richiesta: la chiamata eventualmente in corso verrà completata.";controls();};
+for(const [id,approved] of [["yes",true],["no",false]])$(id).onclick=()=>{phaseStart=null;$("pauseReason").textContent="";return request("/api/run/"+data.run.id+"/approval",{approved});};
+function renderSummary(r){
+ const m=r.summary;if(!m){$("report").hidden=true;return;}
+ $("report").hidden=false;
+ $("report").className="report "+(m.status==="SUCCESS"?"success":m.status==="ESCALATED"?"escalated":"");
+ $("reportTitle").textContent="Mission Summary — "+m.status;
+ $("summaryMetrics").replaceChildren(...[["Iterazioni",m.iteration],["Step",m.steps],["Risposte LLM",m.llm_calls],["Token",m.tokens],["Tool call",m.tool_calls],["Ripianificazioni",m.replans],["Approvazioni",m.approvals],["Rifiuti",m.rejections]].map(([k,v])=>{const d=node("div","");d.append(node("small",k),node("br",""),node("strong",String(v)));return d;}));
+ $("criteria").textContent="Login simulato: "+(m.criteria.login?"OK":"FAILED")+" | CRM: "+(m.criteria.crm_online?"ONLINE":"OFFLINE")+" | Nessuna interruzione aggiuntiva registrata: "+(m.criteria.no_additional_disruptions?"SÌ":"NO");
+ $("interventions").textContent="Interventi riusciti: "+(m.interventions.join(", ")||"nessuno")+" | Tool negati: "+(m.denied_tools.join(", ")||"nessuno");
+ $("termination").textContent=m.termination_reason?"Motivo arresto: "+m.termination_reason:"Missione non ancora conclusa.";
+ const fields=[["Account","account_locked",v=>v?"Bloccato":"Sbloccato"],["Sessione","session_valid",v=>v?"Valida":"Non valida"],["CRM","crm_online",v=>v?"Online":"Offline"],["Utenti registrati","active_users",String],["Interruzioni aggiuntive","interruptions",String]];
+ $("comparison").replaceChildren(...fields.map(([name,key,fmt])=>{const tr=node("tr","");tr.append(node("td",name),node("td",m.initial?fmt(m.initial[key]):"Non disponibile"),node("td",fmt(m.current[key])));return tr;}));
+ $("agentTokens").replaceChildren(...Object.entries(m.tokens_by_agent).map(([role,n])=>node("p",labels[role]+": "+n+" token")));
+}
+$("export").onclick=()=>{if(!data)return;const url=URL.createObjectURL(new Blob([JSON.stringify({run_id:data.run.id,scenario:data.run.scenario,summary:data.run.summary,trace:data.run.trace},null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download="agenticlab-"+data.run.id+".json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+async function loadConfig(){try{const res=await fetch("/api/configuration");if(!res.ok)throw Error("HTTP "+res.status);const cfg=await res.json();$("configuration").replaceChildren(...Object.entries(cfg).map(([role,c])=>{const a=node("article","");a.append(node("h3",labels[role]));const d=node("details","");d.append(node("summary","System prompt"),node("pre",c.system_prompt));a.append(d);const t=node("details","");t.append(node("summary","Tool autorizzati ("+c.tools.length+")"));for(const tool of c.tools)t.append(node("p",tool.name+" — "+tool.description));a.append(t);return a;}));}catch(e){$("configError").textContent="Configurazione non disponibile: "+e.message;}}
+loadConfig();
+controls();
+</script></html>
