@@ -67,3 +67,6 @@ Use **Esegui fase** for webinars: automatically runs the current agent until the
 ## Limitations
 
 Local single-user prototype, not production software. Plain HTML/JS dashboard to minimize setup. One database connection role; role authorization enforced in Python. Token count is actual reported usage; threshold checked between calls, not a hard cap. No cost estimation, real CRM integration or real login tests. End-to-end Azure/PostgreSQL validation required on target environment.
+
+## Consolidation
+The dashboard includes evidence-based mission summary, before/after state, token attribution, effective system prompts and allowed tools, and JSON export for the current run. CRM availability is distinct from absence of additional simulated interruptions. See [consolidation and validation](docs/consolidation.md).
