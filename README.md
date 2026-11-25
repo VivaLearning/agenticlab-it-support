@@ -48,7 +48,21 @@ The agents choose tools dynamically. Replanning is conditional, not guaranteed o
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-See [trainer guide](docs/trainer-guide.md).
+## Documentation
+
+- [Installation — Windows and PostgreSQL](docs/installation.md)
+- [Azure OpenAI resource configuration](docs/azure-setup.md)
+- [Architecture](docs/architecture.md)
+- [Agent and tool contracts](docs/agent-contracts.md)
+- [Trainer guide and webinar script](docs/trainer-guide.md)
+- [Learner guide and theory](docs/learner-guide.md)
+- [Scenarios and acceptance checklist](docs/scenarios.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Glossary](docs/glossary.md)
+
+## Execution modes
+
+Use **Esegui fase** for webinars: automatically runs the current agent until the next role, approval or termination. **Prossimo step** runs one LLM call. **Automatico** runs across roles until approval or termination. After approval explicitly resume. **Pausa esecuzione** stops new calls, not an in-flight request.
 
 ## Limitations
 
