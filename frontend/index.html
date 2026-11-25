@@ -1,0 +1,29 @@
+<!doctype html><html lang="it"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AgenticLab | GH-600</title><style>
+body{font:16px system-ui;margin:0;background:#f4f6fa;color:#17263b}main{max-width:1200px;margin:auto;padding:24px}header{background:#17263b;color:white;padding:20px 30px}h1,h2,h3{margin:0 0 12px}section,article{background:white;border:1px solid #dce2ea;border-radius:10px;padding:18px;margin:12px 0}button,select{font:inherit;padding:10px;margin:4px;border:1px solid #aab8ca;border-radius:6px;background:white}button{cursor:pointer}button:disabled{opacity:.5}button.primary{background:#1758a5;color:white}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.grid article{margin:0}.active{outline:3px solid #1758a5}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px system-ui}#trace{max-height:380px;overflow:auto}.event{border-bottom:1px solid #dce2ea;padding:8px}small{color:#53647a}@media(max-width:750px){.grid{grid-template-columns:1fr}}</style>
+<header><h1>AgenticLab — IT Support</h1>GH-600 | Tre agenti AI, un orchestratore, un ambiente simulato</header><main>
+<section><h2>Missione</h2>Ripristinare l'accesso al CRM senza interrompere gli altri utenti.<br><select id="scenario"><option value="complex">Complex Incident</option><option value="happy">Happy Path</option><option value="governance">Governance Challenge</option></select><button class="primary" id="start">Avvia / Reset</button><button id="step">Prossimo step</button><button id="auto">Automatico</button><button id="stop">Stop automatico</button><p id="error" role="alert"></p></section>
+<section><h2>Orchestrator</h2><div id="status">In attesa</div><p id="notes"></p></section><div class="grid" id="agents"></div>
+<section><h2>Ambiente simulato — PostgreSQL</h2><pre id="env"></pre></section>
+<section id="approval" hidden><h2>Human approval</h2>Sbloccare l'account?<button id="yes">Approva</button><button id="no">Rifiuta</button></section>
+<section><h2>Execution trace</h2><div id="trace"></div></section></main>
+<script>
+let data=null,busy=false,automatic=false;
+const $=id=>document.getElementById(id);
+const notes={MISSION:"Goal-oriented behavior",ROUTING:"Orchestration / dynamic replanning",TOOL_CALL:"Tool calling e least privilege",TOOL_RESULT:"Observation / evidenza",AGENT_OUTPUT:"Output operativo dell'agente",APPROVAL:"Human-in-the-loop",ERROR:"Error handling"};
+function render(){if(!data)return;const r=data.run;
+$("status").textContent=r.status+" | Iterazione "+r.iteration+"/3 | Token "+r.tokens+" | Step "+r.steps;
+$("env").textContent=JSON.stringify(data.environment,null,2);
+$("approval").hidden=r.status!=="APPROVAL_REQUIRED";
+$("agents").replaceChildren(...["planner","resolver","verifier"].map(role=>{const a=document.createElement("article");if(r.role===role)a.className="active";const h=document.createElement("h3");h.textContent=role.toUpperCase();const p=document.createElement("pre");p.textContent=r.trace.filter(e=>e.role===role).slice(-3).map(e=>e.detail||e.tool||e.kind).join("\n");a.append(h,p);return a;}));
+$("trace").replaceChildren(...r.trace.map(e=>{const p=document.createElement("div");p.className="event";p.textContent=e.kind+" | "+(e.role||"")+" | "+(e.detail||e.tool||"")+" "+(e.result?JSON.stringify(e.result):"");return p;}));
+$("trace").scrollTop=$("trace").scrollHeight;
+$("notes").textContent="Trainer note: "+(notes[r.trace.at(-1)?.kind]||"Goal verification");
+}
+async function request(path,body){if(busy)return;busy=true;$("error").textContent="";try{const res=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});if(!res.ok)throw Error("HTTP "+res.status);data=await res.json();render();}catch(e){automatic=false;$("error").textContent=e.message;}finally{busy=false;}}
+$("start").onclick=()=>{automatic=false;return request("/api/start",{scenario:$("scenario").value});};
+const step=()=>data&&request("/api/run/"+data.run.id+"/step");
+$("step").onclick=step;
+$("auto").onclick=async()=>{if(automatic||!data)return;automatic=true;while(automatic&&data.run.status==="RUNNING"){await step();await new Promise(r=>setTimeout(r,350));}automatic=false;};
+$("stop").onclick=()=>automatic=false;
+for(const [id,approved] of [["yes",true],["no",false]])$(id).onclick=()=>request("/api/run/"+data.run.id+"/approval",{approved});
+</script></html>
