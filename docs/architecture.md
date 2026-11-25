@@ -45,3 +45,6 @@ Diagramma concettuale: un singolo agente può effettuare più chiamate. Il passa
 POST /api/start con scenario happy, complex o governance; POST /api/run/{id}/step; POST /api/run/{id}/approval con approved booleano. La fase è un loop client-side che richiama step e si ferma al cambio ruolo o stato. La pausa non annulla una richiesta già inviata.
 ## Limiti
 Massimo 3 iterazioni, 30 chiamate step, soglia token configurabile verificata tra chiamate. Il lock transazionale PostgreSQL serializza le operazioni. La verifica è indipendente per ruolo e controllata dal backend, non un modello diverso. Non ci sono ruoli DB separati, hard budget, autenticazione web, durata garantita o costi monetari calcolati. Non è un sistema produttivo.
+
+## Consolidated reporting
+backend/reporting.py builds deterministic summaries from state and trace. New missions retain initial_environment and final_environment snapshots. GET /api/configuration exposes the effective role prompts and allowed tools (no secrets). Export is browser-side JSON of current mission summary and trace. HUMAN_DECISION records approval or rejection. Existing historical runs are not backfilled. The dashboard labels continuity as absence of additional simulated disruptions, independently from CRM availability.
