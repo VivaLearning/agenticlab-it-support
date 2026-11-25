@@ -52,3 +52,6 @@ L'ordine dei tool può variare: valutare evidenze e risultato, non una sequenza 
 ## 14. Dal POC alla produzione
 Servirebbero identità e autorizzazioni reali, tool validati, isolamento per utente e missione, protezione da prompt injection, timeout e retry controllati, monitoraggio dei costi, valutazioni e test di regressione, gestione dei dati personali. MCP potrebbe standardizzare l'accesso agli strumenti in un'estensione futura; non è implementato qui.
 Approfondimenti: [architettura](architecture.md), [contratti agenti](agent-contracts.md), [scenari](scenarios.md), [glossario](glossary.md).
+
+## 15. Reading the consolidated dashboard
+Mission Summary is computed by Python, not written by the LLM. Compare initial/current state and inspect the token usage by agent. CRM offline and zero additional disruptions may coexist. Escalation is a terminal state, not a real notification or monitoring service. Agent configuration exposes actual prompts and permitted tools; JSON export preserves evidence for comparison. A stronger prompt helps but cannot guarantee correctness; verification remains necessary.
