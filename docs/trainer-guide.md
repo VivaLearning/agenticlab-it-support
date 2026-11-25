@@ -53,3 +53,6 @@ Usare Esegui fase come modalità principale. Prossimo step serve per approfondir
 
 ## Limiti da dichiarare
 Login e CRM sono simulati; la knowledge base è sintetica; gli agenti condividono un deployment; il piano è testo libero; il sistema è locale single-user. Il backend impone i permessi, non ruoli PostgreSQL distinti. Nessun MCP o RAG vettoriale. Il POC non è un prodotto enterprise.
+
+## Consolidated dashboard
+After each phase, use Mission Summary to distinguish login, CRM availability and absence of additional recorded interruptions. Expand Before & After and Token per agente. In Configurazione degli agenti show the actual prompts and tool catalog; export JSON before resetting. The prompt discourages conversational questions and unsupported monitoring claims. Re-test after updating. ESCALATED does not notify anyone automatically.
