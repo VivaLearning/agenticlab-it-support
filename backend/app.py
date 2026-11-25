@@ -7,7 +7,8 @@ from pydantic import BaseModel
 import psycopg
 from psycopg.types.json import Jsonb
 from backend.domain import scenario, execute, verify, ALLOWED
-from backend.llm import call
+from backend.reporting import summarize
+from backend.llm import call, configuration
 
 load_dotenv()
 app=FastAPI(title="AgenticLab IT Support")
@@ -22,6 +23,8 @@ def event(c, r, kind, **data):
     c.execute("INSERT INTO lab_event(run_id,event) VALUES (%s,%s)",(r["id"],Jsonb(e)))
 
 def save(c,r,s):
+    r["final_environment"]=s.copy()
+    r["summary"]=summarize(r,s)
     c.execute("UPDATE lab_run SET state=%s WHERE id=%s",(Jsonb(r),r["id"]))
     c.execute("INSERT INTO lab_state VALUES (1,%s) ON CONFLICT(id) DO UPDATE SET state=excluded.state",(Jsonb(s),))
 
@@ -34,11 +37,15 @@ class Approval(BaseModel):
 def home():
     return FileResponse(ROOT/"frontend"/"index.html")
 
+@app.get("/api/configuration")
+def agent_configuration():
+    return configuration()
+
 @app.post("/api/start")
 def start(body:Start):
     try: s=scenario(body.scenario)
     except ValueError as e: raise HTTPException(400,str(e))
-    r={"id":str(uuid.uuid4()),"role":"planner","status":"RUNNING","iteration":1,"tokens":0,
+    r={"scenario":body.scenario,"initial_environment":s.copy(),"id":str(uuid.uuid4()),"role":"planner","status":"RUNNING","iteration":1,"tokens":0,
        "messages":[{"role":"user","content":"Ripristina accesso CRM senza interrompere gli altri utenti. Diagnostica e pianifica."}],
        "trace":[],"pending":None,"plan":"","evidence":[],"steps":0}
     with db() as c:
@@ -53,8 +60,9 @@ def load(c,id):
     c.execute("SELECT pg_advisory_xact_lock(600)")
     row=c.execute("SELECT state FROM lab_run WHERE id=%s FOR UPDATE",(id,)).fetchone()
     if not row: raise HTTPException(404,"Mission not found")
-    s=c.execute("SELECT state FROM lab_state WHERE id=1").fetchone()[0]
-    return row[0],s
+    r=row[0]
+    s=r.get("final_environment") or c.execute("SELECT state FROM lab_state WHERE id=1").fetchone()[0]
+    return r,s
 
 def switch(c,r,role,content):
     previous=r["role"]
@@ -75,6 +83,7 @@ def step(id:uuid.UUID):
         remaining=int(os.getenv("MAX_TOKENS","20000"))-r["tokens"]
         if remaining<=0 or r["steps"]>=30:
             r["status"]="LIMIT_REACHED"
+            event(c,r,"TERMINATION",role="orchestrator",detail="Soglia token o limite step raggiunto",result=verify(s))
         else:
             r["steps"]+=1
             role=r["role"]
@@ -97,11 +106,11 @@ def step(id:uuid.UUID):
                     event(c,r,"ERROR",role=role,detail="Expected one tool call")
                 else:
                     t=calls[0]; name=t["function"]["name"]
-                    event(c,r,"TOOL_CALL",role=role,tool=name)
+                    event(c,r,"TOOL_CALL",role=role,tool=name,arguments=t["function"].get("arguments","{}"))
                     if name=="unlock" and role=="resolver" and s["account_locked"]:
                         r["pending"]={"tool":name,"id":t["id"]}
                         r["status"]="APPROVAL_REQUIRED"
-                        event(c,r,"APPROVAL",role=role,detail="Sbloccare account?")
+                        event(c,r,"APPROVAL",role="orchestrator",tool=name,detail="Sbloccare account?")
                     else:
                         observation(c,r,name,t["id"],execute(role,name,s))
             else:
@@ -135,9 +144,12 @@ def approval(id:uuid.UUID,body:Approval):
         r,s=load(c,id)
         if r["status"]!="APPROVAL_REQUIRED" or not r["pending"]: raise HTTPException(409,"No pending approval")
         p=r["pending"]
+        event(c,r,"HUMAN_DECISION",role="orchestrator",tool=p["tool"],detail="Approvato" if body.approved else "Rifiutato",approved=body.approved)
         result=execute(r["role"],p["tool"],s,True) if body.approved else {"status":"DENIED","reason":"Human rejected"}
         observation(c,r,p["tool"],p["id"],result)
         r["pending"]=None
         r["status"]="RUNNING" if body.approved else "ESCALATED"
+        if not body.approved:
+            event(c,r,"TERMINATION",role="orchestrator",detail="Autorizzazione umana negata",result=verify(s))
         save(c,r,s)
         return {"run":r,"environment":s}
